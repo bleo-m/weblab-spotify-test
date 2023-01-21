@@ -5,6 +5,10 @@
 |
 | This file defines the routes for your server.
 |
+
+Spotify API integration was assembled from several sources I found online as well as my own past personal projects. 
+Modified by: github.com/bleo-m. 
+Email with questions: bleo@mit.edu
 */
 
 const express = require("express");
@@ -18,8 +22,13 @@ const auth = require("./auth");
 // api endpoints: all these paths will be prefixed with "/api/"
 const router = express.Router();
 
+const request = require("request");
+const dotenv = require("dotenv");
+
 //initialize socket
 const socketManager = require("./server-socket");
+
+dotenv.config();
 
 router.post("/login", auth.login);
 router.post("/logout", auth.logout);
@@ -37,6 +46,90 @@ router.post("/initsocket", (req, res) => {
   if (req.user)
     socketManager.addUser(req.user, socketManager.getSocketFromSocketID(req.body.socketid));
   res.send({});
+});
+
+// ---------- SPOTIFY STUFF DOWN HERE -> ONLY SUPPORTS ONE USER at the moment.
+// TODO:  - Store user's tokens on the database to support multiple users.
+//        - Add functionality to get new tokens when they run out.
+//        - We can talk about these other tasks more if you need help. Make a piazza post or come to office hours.
+
+// Go to https://developer.spotify.com/dashboard/ and add this as a callback url "http://localhost:[YOUR FRONTEND PORT]/api/spotify/callback"
+// In this example, my frontend port is 5050. It may be yours as well since i just used the default weblab skeleton.
+
+let access_token = ""; // initiate access token
+const spotify_client_id = process.env.SPOTIFY_CLIENT_ID;
+const spotify_client_secret = process.env.SPOTIFY_CLIENT_SECRET;
+const callback_uri = "http://localhost:5050/api/spotify/callback";
+/**
+ * Generates a secure random token (https://stackoverflow.com/questions/8855687/secure-random-token-in-node-js)
+ */
+function generateRandomString() {
+  require("crypto").randomBytes(48, function (err, buffer) {
+    return buffer.toString("hex");
+  });
+}
+
+/**
+ * API endpoint for pulling up the spotify login page. If the page doesn't pull up its probably because your browser remembers ur login session.
+ * If you need to see the Spotify login page for testing purposes use an incognito window, it will forget all your browser data.
+ */
+router.get("/spotify/login", (req, res) => {
+  var scope =
+    "streaming \
+                 user-read-email \
+                 user-read-private";
+
+  const state = generateRandomString(16);
+
+  var auth_query_parameters = new URLSearchParams({
+    response_type: "code",
+    client_id: spotify_client_id,
+    scope: scope,
+    redirect_uri: callback_uri, // make sure that this is your FRONTEND! localhost:5050 points to the front end not backend for me
+    state: state,
+  });
+
+  res.redirect("https://accounts.spotify.com/authorize/?" + auth_query_parameters.toString());
+});
+
+/**
+ * This is the callback function that runs after a user logs in through the spotify login page. It will fetch an access token from the Spotify servers.
+ */
+router.get("/spotify/callback", (req, res) => {
+  var code = req.query.code;
+
+  var authOptions = {
+    url: "https://accounts.spotify.com/api/token",
+    form: {
+      code: code,
+      redirect_uri: callback_uri,
+      grant_type: "authorization_code",
+    },
+    headers: {
+      Authorization:
+        "Basic " + Buffer.from(spotify_client_id + ":" + spotify_client_secret).toString("base64"),
+      "Content-Type": "routerlication/x-www-form-urlencoded",
+    },
+    json: true,
+  };
+
+  request.post(authOptions, function (error, response, body) {
+    if (!error && response.statusCode === 200) {
+      access_token = body.access_token; // this is the access token that you will use to send to the Spotify API anytime you send them an API call.
+      res.redirect("/"); // sends user back to the home page after a token is fetched. Up to you to change this to whatever path you want.
+    }
+  });
+});
+
+/**
+ * Called as soon as someone opens up localhost:5050/spotifyPage in order to check if there is an access token available on the server.
+ * You can use this to render different things and check if someone has logged in on the front end.
+ */
+router.get("/spotify/token", (req, res) => {
+  console.log("token page");
+  res.json({
+    access_token: access_token,
+  });
 });
 
 // |------------------------------|
